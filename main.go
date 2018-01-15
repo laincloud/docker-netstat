@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"github.com/Devatoria/go-nsenter"
+	"github.com/cyberdelia/go-metrics-graphite"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
-	"github.com/marpaia/graphite-golang"
+	"github.com/rcrowley/go-metrics"
 	"log"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,82 +17,59 @@ import (
 )
 
 var (
-	dockerHost   string
-	graphiteHost string
-	graphitePort int
+	graphiteAddress string
 )
 
 func init() {
-	flag.StringVar(&dockerHost, "docker", "127.0.0.1:2375", "docker host")
-	flag.StringVar(&graphiteHost, "host", "", "graphite host")
-	flag.IntVar(&graphitePort, "port", 2003, "graphite port")
+	flag.StringVar(&graphiteAddress, "graphite", "", "graphite host")
 	flag.Parse()
 }
 
 type ContainerNetstat struct {
-	gh          *graphite.Graphite
+	addr        *net.TCPAddr
 	pid         int
 	app         string
 	proc        string
 	no          int
-	ESTABLISHED int
-	SYN_SENT    int
-	SYN_RECV    int
-	FIN_WAIT1   int
-	FIN_WAIT2   int
-	TIME_WAIT   int
-	CLOSE       int
-	CLOSE_WAIT  int
-	LAST_ACK    int
-	LISTEN      int
-	CLOSING     int
+	ESTABLISHED int64
+	SYN_SENT    int64
+	SYN_RECV    int64
+	FIN_WAIT1   int64
+	FIN_WAIT2   int64
+	TIME_WAIT   int64
+	CLOSE       int64
+	CLOSE_WAIT  int64
+	LAST_ACK    int64
+	LISTEN      int64
+	CLOSING     int64
 }
 
 func (cn *ContainerNetstat) send() {
-	cn.gh.Prefix = "lain_cloud."
-	err := cn.gh.SimpleSend("app."+cn.app+".proc."+cn.proc+"."+strconv.Itoa(cn.no)+".tcp_connections.ESTABLISHED", strconv.Itoa(cn.ESTABLISHED))
-	if err != nil {
-		log.Println(err)
+	r := metrics.NewRegistry()
+	prefix := "app." + cn.app + ".proc." + cn.proc + "." + strconv.Itoa(cn.no) + ".tcp_connections."
+	metrics.GetOrRegisterGauge(prefix+"ESTABLISHED", r).Update(cn.ESTABLISHED)
+	metrics.GetOrRegisterGauge(prefix+"SYN_SENT", r).Update(cn.SYN_SENT)
+	metrics.GetOrRegisterGauge(prefix+"SYN_RECV", r).Update(cn.SYN_RECV)
+	metrics.GetOrRegisterGauge(prefix+"FIN_WAIT1", r).Update(cn.FIN_WAIT1)
+	metrics.GetOrRegisterGauge(prefix+"FIN_WAIT2", r).Update(cn.FIN_WAIT2)
+	metrics.GetOrRegisterGauge(prefix+"TIME_WAIT", r).Update(cn.TIME_WAIT)
+	metrics.GetOrRegisterGauge(prefix+"CLOSE", r).Update(cn.CLOSE)
+	metrics.GetOrRegisterGauge(prefix+"CLOSE_WAIT", r).Update(cn.CLOSE_WAIT)
+	metrics.GetOrRegisterGauge(prefix+"LAST_ACK", r).Update(cn.LAST_ACK)
+	metrics.GetOrRegisterGauge(prefix+"LISTEN", r).Update(cn.LISTEN)
+	metrics.GetOrRegisterGauge(prefix+"CLOSING", r).Update(cn.CLOSING)
+	c := graphite.Config{
+		Addr:          cn.addr,
+		Registry:      r,
+		FlushInterval: time.Minute,
+		DurationUnit:  time.Millisecond,
+		Percentiles:   []float64{0.5, 0.75, 0.99, 0.999},
+		Prefix:        "lain_cloud.",
 	}
-	err = cn.gh.SimpleSend("app."+cn.app+".proc."+cn.proc+"."+strconv.Itoa(cn.no)+".tcp_connections.SYN_SENT", strconv.Itoa(cn.SYN_SENT))
+	err := graphite.Once(c)
 	if err != nil {
 		log.Println(err)
-	}
-	err = cn.gh.SimpleSend("app."+cn.app+".proc."+cn.proc+"."+strconv.Itoa(cn.no)+".tcp_connections.SYN_RECV", strconv.Itoa(cn.SYN_RECV))
-	if err != nil {
-		log.Println(err)
-	}
-	err = cn.gh.SimpleSend("app."+cn.app+".proc."+cn.proc+"."+strconv.Itoa(cn.no)+".tcp_connections.FIN_WAIT1", strconv.Itoa(cn.FIN_WAIT1))
-	if err != nil {
-		log.Println(err)
-	}
-	err = cn.gh.SimpleSend("app."+cn.app+".proc."+cn.proc+"."+strconv.Itoa(cn.no)+".tcp_connections.FIN_WAIT2", strconv.Itoa(cn.FIN_WAIT2))
-	if err != nil {
-		log.Println(err)
-	}
-	err = cn.gh.SimpleSend("app."+cn.app+".proc."+cn.proc+"."+strconv.Itoa(cn.no)+".tcp_connections.TIME_WAIT", strconv.Itoa(cn.TIME_WAIT))
-	if err != nil {
-		log.Println(err)
-	}
-	err = cn.gh.SimpleSend("app."+cn.app+".proc."+cn.proc+"."+strconv.Itoa(cn.no)+".tcp_connections.CLOSE", strconv.Itoa(cn.CLOSE))
-	if err != nil {
-		log.Println(err)
-	}
-	err = cn.gh.SimpleSend("app."+cn.app+".proc."+cn.proc+"."+strconv.Itoa(cn.no)+".tcp_connections.CLOSE_WAIT", strconv.Itoa(cn.CLOSE_WAIT))
-	if err != nil {
-		log.Println(err)
-	}
-	err = cn.gh.SimpleSend("app."+cn.app+".proc."+cn.proc+"."+strconv.Itoa(cn.no)+".tcp_connections.LAST_ACK", strconv.Itoa(cn.LAST_ACK))
-	if err != nil {
-		log.Println(err)
-	}
-	err = cn.gh.SimpleSend("app."+cn.app+".proc."+cn.proc+"."+strconv.Itoa(cn.no)+".tcp_connections.LISTEN", strconv.Itoa(cn.LISTEN))
-	if err != nil {
-		log.Println(err)
-	}
-	err = cn.gh.SimpleSend("app."+cn.app+".proc."+cn.proc+"."+strconv.Itoa(cn.no)+".tcp_connections.CLOSING", strconv.Itoa(cn.CLOSING))
-	if err != nil {
-		log.Println(err)
+		return
 	}
 }
 
@@ -108,11 +86,10 @@ func removeEmpty(array []string) []string {
 func (cn *ContainerNetstat) netstat() {
 	config := &nsenter.Config{
 		Target: cn.pid,
-		Net:    true,
 	}
 	stdout, stderr, err := config.Execute("netstat", "-nt")
 	if err != nil {
-		fmt.Println(stderr)
+		log.Println(stderr)
 		return
 	}
 
@@ -148,20 +125,19 @@ func (cn *ContainerNetstat) netstat() {
 }
 
 func main() {
-	for {
-		dockerClient, err := client.NewClient("tcp://"+dockerHost, "1.24", nil, nil)
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
-		gh, err := graphite.NewGraphite(graphiteHost, graphitePort)
+	addr, err := net.ResolveTCPAddr("tcp", graphiteAddress)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for range time.Tick(time.Minute) {
+		dockerClient, err := client.NewClient(client.DefaultDockerHost, "1.24", nil, nil)
 		if err != nil {
 			log.Println(err)
-			return
+			continue
 		}
 		containers, err := dockerClient.ContainerList(context.Background(), types.ContainerListOptions{})
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			continue
 		}
 		var wg sync.WaitGroup
@@ -172,19 +148,19 @@ func main() {
 				defer wg.Done()
 				json, err := dockerClient.ContainerInspect(context.Background(), id)
 				if err != nil {
-					fmt.Println(err)
+					log.Println(err)
 					return
 				}
 				names := strings.Split(json.Name, ".")
 				if len(names) == 4 {
 					no, err := strconv.Atoi(strings.Split(names[3], "-")[1][1:])
 					if err != nil {
-						fmt.Println(err)
+						log.Println(err)
 						return
 					}
 					if no > 0 {
 						cn := ContainerNetstat{
-							gh:   gh,
+							addr: addr,
 							pid:  json.State.Pid,
 							app:  names[0][1:],
 							proc: names[2],
@@ -196,6 +172,5 @@ func main() {
 			}()
 		}
 		wg.Wait()
-		time.Sleep(time.Minute)
 	}
 }
