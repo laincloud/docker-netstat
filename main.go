@@ -162,7 +162,7 @@ func main() {
 						cn := ContainerNetstat{
 							addr: addr,
 							pid:  json.State.Pid,
-							app:  names[0][1:],
+							app:  strings.Replace(names[0][1:],"-","_",-1),
 							proc: names[2],
 							no:   no,
 						}
