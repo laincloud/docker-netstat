@@ -138,7 +138,15 @@ func main() {
 		containers, err := dockerClient.ContainerList(context.Background(), types.ContainerListOptions{})
 		if err != nil {
 			log.Println(err)
+			err = dockerClient.Close()
+			if err != nil {
+				log.Println(err)
+			}
 			continue
+		}
+		err = dockerClient.Close()
+		if err != nil {
+			log.Println(err)
 		}
 		var wg sync.WaitGroup
 		wg.Add(len(containers))
