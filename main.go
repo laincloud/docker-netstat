@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"fmt"
 )
 
 var (
@@ -87,9 +88,9 @@ func (cn *ContainerNetstat) netstat() {
 	config := &nsenter.Config{
 		Target: cn.pid,
 	}
-	stdout, stderr, err := config.Execute("netstat", "-nt")
+	stdout, _, err := config.Execute("netstat", "-nt")
 	if err != nil {
-		log.Println(stderr)
+		log.Println(err)
 		return
 	}
 
@@ -125,60 +126,57 @@ func (cn *ContainerNetstat) netstat() {
 }
 
 func main() {
-	addr, err := net.ResolveTCPAddr("tcp", graphiteAddress)
-	if err != nil {
-		log.Fatal(err)
-	}
-	for range time.Tick(time.Minute) {
+	for {
+		addr, err := net.ResolveTCPAddr("tcp", graphiteAddress)
+		if err != nil {
+			log.Fatal(err)
+		}
 		dockerClient, err := client.NewClient(client.DefaultDockerHost, "1.24", nil, nil)
 		if err != nil {
-			log.Println(err)
-			continue
+			log.Fatal(err)
 		}
-		containers, err := dockerClient.ContainerList(context.Background(), types.ContainerListOptions{})
-		if err != nil {
-			log.Println(err)
-			err = dockerClient.Close()
+		for range time.Tick(time.Minute) {
+			containers, err := dockerClient.ContainerList(context.Background(), types.ContainerListOptions{})
 			if err != nil {
 				log.Println(err)
+				break
 			}
-			continue
-		}
-		err = dockerClient.Close()
-		if err != nil {
-			log.Println(err)
-		}
-		var wg sync.WaitGroup
-		wg.Add(len(containers))
-		for _, container := range containers {
-			id := container.ID
-			go func() {
-				defer wg.Done()
-				json, err := dockerClient.ContainerInspect(context.Background(), id)
-				if err != nil {
-					log.Println(err)
-					return
-				}
-				names := strings.Split(json.Name, ".")
-				if len(names) == 4 {
-					no, err := strconv.Atoi(strings.Split(names[3], "-")[1][1:])
+			var wg sync.WaitGroup
+			wg.Add(len(containers))
+			for _, container := range containers {
+				id := container.ID
+				go func() {
+					defer wg.Done()
+					json, err := dockerClient.ContainerInspect(context.Background(), id)
 					if err != nil {
 						log.Println(err)
 						return
 					}
-					if no > 0 {
-						cn := ContainerNetstat{
-							addr: addr,
-							pid:  json.State.Pid,
-							app:  strings.Replace(names[0][1:],"-","_",-1),
-							proc: names[2],
-							no:   no,
+					names := strings.Split(json.Name, ".")
+					if len(names) == 4 {
+						no, err := strconv.Atoi(strings.Split(names[3], "-")[1][1:])
+						if err != nil {
+							log.Println(err)
+							return
 						}
-						cn.netstat()
+						if no > 0 {
+							cn := ContainerNetstat{
+								addr: addr,
+								pid:  json.State.Pid,
+								app:  strings.Replace(names[0][1:], "-", "_", -1),
+								proc: names[2],
+								no:   no,
+							}
+							cn.netstat()
+						}
 					}
-				}
-			}()
+				}()
+			}
+			wg.Wait()
 		}
-		wg.Wait()
+		err = dockerClient.Close()
+		if err != nil {
+			fmt.Println(err)
+		}
 	}
 }
